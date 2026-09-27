@@ -111,31 +111,26 @@ public class RedisStringService {
 
 #### 3.2.2 自定义序列化
 
-serializer = 序列化器
+序列化器（serializer）负责 Java 对象和字节之间的转换：
 
-• 序列化 serialize：Java 对象 → 字节/字符串，存入 Redis、网络传输、文件
+- 序列化 serialize：Java 对象 → 字节/字符串，存入 Redis、网络传输、文件
+- 反序列化 deserialize：字节/字符串 → 恢复成 Java 对象
 
-• 反序列化 deserialize：字节/字符串 → 恢复成 Java 对象
+`RedisTemplate` 有 4 处要配置序列化器：
 
+| 配置项 | 作用 |
+| --- | --- |
+| `keySerializer` | 普通 key 的序列化方式 |
+| `valueSerializer` | 普通 value 的序列化方式 |
+| `hashKeySerializer` | Hash 的 field 的序列化方式 |
+| `hashValueSerializer` | Hash 的 value 的序列化方式 |
 
-
-RedisTemplate 有4处要配置序列化器：
-1. keySerializer：普通key
-2. valueSerializer：普通value
-3. hashKeySerializer：hash 的 field
-4. hashValueSerializer：hash 的 value
-
-   
-
-| 序列化器 | 	处理对象 | Redis 存储内容 | 特点 |
+| 序列化器 | 处理对象 | Redis 存储内容 | 特点 |
 | --- | --- | --- | --- |
-| StringRedisSerializer | 	String | 明文字符串 |key、hash‑field 首选 |
-| JdkSerializationRedisSerializer | 实现 Serializable 的对象 | 二进制乱码 | 默认，业务不推荐 |
-|GenericJackson2JsonRedisSerializer | 任意 POJO | 带@class的 JSON | 通用，项目常用配置 |
-|Jackson2JsonRedisSerializer | 指定单一 Class | JSON | 限定类型，灵活性差 |
-
-
-
+| `StringRedisSerializer` | String | 明文字符串 | key、hash-field 首选 |
+| `JdkSerializationRedisSerializer` | 实现 Serializable 的对象 | 二进制乱码 | 默认，业务不推荐 |
+| `GenericJackson2JsonRedisSerializer` | 任意 POJO | 带 `@class` 的 JSON | 通用，项目常用配置 |
+| `Jackson2JsonRedisSerializer` | 指定单一 Class | JSON | 限定类型，灵活性差 |
 
 Redis 最终保存的是字节数据。序列化器决定 Java 对象如何转换为字节，以及读取时如何还原。默认配置可能使用 JDK 序列化，数据可读性较差，项目中常改为 JSON 序列化。
 
