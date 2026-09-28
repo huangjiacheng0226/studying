@@ -68,16 +68,7 @@ CREATE TABLE emp_project (emp_id BIGINT NOT NULL, project_id BIGINT NOT NULL,
 
 实际项目更常用逻辑外键的三个原因：表结构变更和数据迁移不受约束限制；分库分表或服务拆分后跨表外键根本建不起来；删除策略由业务决定，例如“部门下有员工就不允许删除”，比数据库直接抛异常更友好。代价是关系维护的责任转移到代码里，删除前必须先查子表。
 
-### 1.6 多表设计的检查顺序
-
 一对多查询时，员工表是多的一方，通常保存 `dept_id`；一对一关系要求关联字段唯一；多对多关系需要中间表保存两边主键。设计多表关系时先确定“谁是主表、谁是从表”，再决定关联字段和删除策略：查询列表通常以员工为主表使用 `LEFT JOIN`，编辑详情时可分别查询主表和子表，避免连接多个一对多关系造成笛卡尔积。
-
-| 检查项 | 判断标准 |
-|---|---|
-| 关联字段放哪 | 一对多放多的一方，一对一放从表并加唯一索引，多对多建中间表 |
-| 要不要加索引 | 所有参与连接的关联字段都要建索引 |
-| 删除策略 | 先查子表，再决定是拒绝删除还是级联删除 |
-| 查询方向 | 列表以主表 `LEFT JOIN` 从表，避免内连接丢掉没关联的数据 |
 
 ## 2. 多表查询
 
@@ -87,10 +78,9 @@ CREATE TABLE emp_project (emp_id BIGINT NOT NULL, project_id BIGINT NOT NULL,
 
 | 类型 | 语法特征 | 结果特点 | 常见用途 |
 |---|---|---|---|
-| 内连接（隐式） | `FROM emp e, dept d WHERE e.dept_id = d.id` | 只保留两表都匹配的记录 | 老写法，条件一多容易漏掉连接条件 |
-| 内连接（显式） | `FROM emp e INNER JOIN dept d ON e.dept_id = d.id` | 只保留两表都匹配的记录 | 推荐写法，连接和过滤分开写 |
+| 内连接 | `FROM emp e INNER JOIN dept d ON e.dept_id = d.id`（也可写成 `FROM emp e, dept d WHERE ...`） | 只保留两表都匹配的记录 | 只关注两表都有对应数据的情况 |
 | 左外连接 | `FROM emp e LEFT JOIN dept d ON e.dept_id = d.id` | 保留左表全部记录，右表不匹配补 `NULL` | 列表查询，员工没有部门也要显示 |
-| 右外连接 | `FROM emp e RIGHT JOIN dept d ON ...` | 保留右表全部记录 | 等价于左右表调换后的左外连接，实际少用 |
+| 右外连接 | `FROM emp e RIGHT JOIN dept d ON ...` | 保留右表全部记录 | 把左右表调换后用左外连接即可，实际少用 |
 | 自连接 | `FROM emp e JOIN emp m ON e.manager_id = m.id` | 同一张表当两张表连接 | 上下级、菜单树、同类推荐 |
 | 子查询 | 括号里再套一条 `SELECT` | 返回一个值、一列、多列或一张临时表 | 先统计再筛选，先查 ID 再查明细 |
 
@@ -99,8 +89,7 @@ CREATE TABLE emp_project (emp_id BIGINT NOT NULL, project_id BIGINT NOT NULL,
 多表查询里列名经常重名（`emp.name` 和 `dept.name`），表名又长，所以每张表都起简短别名：表别名紧跟表名，之后整条 SQL 都用别名引用列；列别名用 `AS` 起，让结果集列名可读，并能和实体属性、`resultMap` 对应。
 
 ```sql
-SELECT e.name, d.name AS dept_name FROM emp e
-JOIN dept d ON e.dept_id = d.id;
+SELECT e.name, d.name AS dept_name FROM emp e JOIN dept d ON e.dept_id = d.id;
 ```
 
 ### 2.3 内连接：隐式与显式
@@ -152,8 +141,8 @@ LEFT JOIN dept d ON e.dept_id = d.id WHERE d.name = '研发部';
 自连接是把同一张表当成两张表连接，至少要给其中一张起别名。它同样要选对外连接方向，领导字段为空的顶级员工不能被过滤掉：
 
 ```sql
-SELECT e.name, m.name AS manager_name
-FROM emp e LEFT JOIN emp m ON e.manager_id = m.id;
+SELECT e.name, m.name AS manager_name FROM emp e
+LEFT JOIN emp m ON e.manager_id = m.id;
 ```
 
 ### 2.7 子查询
@@ -162,11 +151,10 @@ FROM emp e LEFT JOIN emp m ON e.manager_id = m.id;
 
 ```sql
 -- 返回单个值：工资高于全体平均工资
-SELECT id, name, salary FROM emp WHERE salary > (SELECT AVG(salary) FROM emp);
+SELECT id, name FROM emp WHERE salary > (SELECT AVG(salary) FROM emp);
 
 -- 返回一列多行：研发部和测试部的员工
-SELECT id, name FROM emp
-WHERE dept_id IN (SELECT id FROM dept WHERE name IN ('研发部', '测试部'));
+SELECT id, name FROM emp WHERE dept_id IN (SELECT id FROM dept WHERE name IN ('研发部', '测试部'));
 ```
 
 能用连接表达的优先用连接：`IN` 的子查询返回大量数据时性能通常不如 `JOIN`，嵌套太深也会让执行计划难以优化。
@@ -235,35 +223,29 @@ return new PageResult<>(pageInfo.getTotal(), pageInfo.getList());
 
 分页 SQL 的 `ORDER BY` 必须稳定，常用 `update_time DESC, id DESC` 作为兜底排序。列表接口只返回页面需要的字段，详情接口再查询完整对象，有助于减少网络和数据库开销。
 
-`reasonable: true` 表示页码超出范围时自动回到第一页或最后一页；如果要让越界直接报错就设为 `false`。
-
 ## 4. 条件分页查询的完整链路
 
-一次带条件的员工列表请求要穿过浏览器、Controller、Service、Mapper、数据库五层，最后封装成 PageBean 返回。下面按调用顺序拆开看。
+一次带条件的员工列表请求要穿过浏览器、Controller、Service、Mapper、数据库五层，最后封装成 PageBean 返回。
 
 ### 4.1 Controller 接收参数
 
 ```java
-@Slf4j
 @RestController
-@RequestMapping("/emps")
 public class EmpController {
     @Autowired
     private EmpService empService;
-
     @GetMapping
     public Result<PageBean> page(@RequestParam(defaultValue = "1") Integer page,
                                  @RequestParam(defaultValue = "10") Integer pageSize,
                                  String name, Short gender,
                                  @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate begin,
                                  @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate end) {
-        PageBean pageBean = empService.page(page, pageSize, name, gender, begin, end);
-        return Result.success(pageBean);
+        return Result.success(empService.page(page, pageSize, name, gender, begin, end));
     }
 }
 ```
 
-Spring MVC 会自动把请求参数绑定到方法参数：`page` 和 `pageSize` 要给默认值，日期参数要加 `@DateTimeFormat`，否则 `yyyy-MM-dd` 的字符串无法绑定到 `LocalDate`，接口会直接报参数类型错误。参数校验（页码从 1 开始、`pageSize` 设上限）也在这里或 Service 里完成。
+Spring MVC 自动把请求参数绑定到方法参数：`page` 和 `pageSize` 要给默认值，日期参数要加 `@DateTimeFormat`，否则 `yyyy-MM-dd` 字符串无法绑定到 `LocalDate`。页码从 1 开始、`pageSize` 设上限这类校验也在这里或 Service 里完成。
 
 ### 4.2 Service 组装 PageHelper 与 PageInfo
 
@@ -272,7 +254,6 @@ Spring MVC 会自动把请求参数绑定到方法参数：`page` 和 `pageSize`
 public class EmpServiceImpl implements EmpService {
     @Autowired
     private EmpMapper empMapper;
-
     @Override
     public PageBean page(Integer page, Integer pageSize, String name,
                          Short gender, LocalDate begin, LocalDate end) {
@@ -284,155 +265,106 @@ public class EmpServiceImpl implements EmpService {
 }
 ```
 
-三步的顺序不能变：先 `startPage`，紧接着执行 Mapper 查询，再用这条查询返回的 List 构造 `PageInfo`。`PageInfo` 会从被改写的查询结果里取出总记录数、当前页、总页数等信息，`PageBean` 只挑前端需要的 `total` 和 `rows` 返回。
+三步顺序不能变：先 `startPage`，紧接着执行 Mapper 查询，再用这条查询返回的 List 构造 `PageInfo`；`PageInfo` 从被改写的查询结果里取出总数和当页数据，`PageBean` 只挑前端需要的 `total` 和 `rows` 返回。
 
 ### 4.3 Mapper 用 resultMap 做嵌套映射
 
-员工联查部门时，列表里要显示部门名称。可以像 2.8 那样用 `d.name AS deptName` 把列名平铺，也可以在实体类里放一个 `Dept` 对象，用 `resultMap` 的 `<association>` 嵌套映射：
+员工联查部门时列表要显示部门名称。可以像 2.8 那样用 `d.name AS deptName` 平铺，也可以在实体类里放一个 `Dept` 对象，用 `resultMap` 的 `<association>` 嵌套映射：
 
 ```xml
 <resultMap id="empResultMap" type="com.example.pojo.Emp">
   <id column="id" property="id"/>
   <result column="name" property="name"/>
-  <result column="gender" property="gender"/>
-  <result column="dept_id" property="deptId"/>
   <association property="dept" javaType="com.example.pojo.Dept">
     <id column="dept_id" property="id"/>
     <result column="dept_name" property="name"/>
   </association>
 </resultMap>
-
 <select id="page" resultMap="empResultMap">
   SELECT e.*, d.name AS dept_name
   FROM emp e LEFT JOIN dept d ON e.dept_id = d.id
   <where>
-    <if test="name != null and name != ''">
-      e.name LIKE CONCAT('%', #{name}, '%')
-    </if>
+    <if test="name != null and name != ''">e.name LIKE CONCAT('%', #{name}, '%')</if>
     <if test="gender != null">AND e.gender = #{gender}</if>
-    <if test="begin != null and end != null">
-      AND e.entry_date BETWEEN #{begin} AND #{end}
-    </if>
+    <if test="begin != null and end != null">AND e.entry_date BETWEEN #{begin} AND #{end}</if>
   </where>
   ORDER BY e.update_time DESC, e.id DESC
 </select>
 ```
 
-`<id>` 用来标记主键，`<result>` 做普通列到属性的映射，`<association>` 把一个从表对象嵌进主表对象。用 `resultType` 时列名必须和属性名对应（多出来的 `dept_name` 只能靠手动加属性接），用 `resultMap` 时列名只和 `column` 对应，映射意图更清楚。如果一个员工还要带上多条工作经历，就把 `<association>` 换成 `<collection>`，用一条 SQL 把主表和子表的一对多关系一次查出来。
+`<id>` 标记主键，`<result>` 做列到属性的映射，`<association>` 把一个从表对象嵌进主表对象。用 `resultType` 时列名必须和属性名对应，用 `resultMap` 时列名只和 `column` 对应，映射意图更清楚；一个员工要带上多条工作经历时，把 `<association>` 换成 `<collection>` 即可。
 
 ### 4.4 一次分页请求的时序图
 
 ```mermaid
 sequenceDiagram
-    participant B as 浏览器
-    participant C as EmpController
-    participant S as EmpServiceImpl
-    participant M as EmpMapper
-    participant D as MySQL
-    B->>C: GET /emps?page=1&pageSize=10&name=张&gender=1
-    C->>C: 绑定参数并补默认值
-    C->>S: page(page, pageSize, name, gender, begin, end)
-    S->>S: PageHelper.startPage(page, pageSize)
-    S->>M: empMapper.page(...)
-    M->>D: 插件改写为 count 语句
-    D-->>M: total = 42
-    M->>D: 插件改写为带 LIMIT 的列表语句
-    D-->>M: 当前页 10 条记录
-    M-->>S: 返回当前页的员工列表
-    S->>S: new PageInfo(empList)
-    S-->>C: new PageBean(total, rows)
-    C-->>B: {"code":1,"data":{"total":42,"rows":[...]}}
+    浏览器->>Controller: GET /emps?page=1&pageSize=10&name=张
+    Controller->>Service: page(page, pageSize, name, gender, begin, end)
+    Service->>Service: PageHelper.startPage(page, pageSize)
+    Service->>Mapper: empMapper.page(...)
+    Mapper->>数据库: 改写为 count 语句
+    数据库-->>Mapper: total = 42
+    Mapper->>数据库: 改写为带 LIMIT 的列表语句
+    数据库-->>Mapper: 当前页 10 条记录
+    Mapper-->>Service: 返回当前页列表
+    Service->>PageBean: new PageInfo(empList) 取出 total 和 rows
+    PageBean-->>Controller: 返回 PageBean
+    Controller-->>浏览器: 返回 JSON
 ```
-
-这张图说明了 PageHelper 的核心：它不是在内存里查完再截取，而是在执行 Mapper 查询之前改写 SQL，并额外执行一次 count。
 
 ### 4.5 PageBean 的 total 与 rows
 
 | 字段 | 类型 | 含义 | 来源 | 前端用法 |
 |---|---|---|---|---|
-| `total` | `Long` | 满足条件的总记录数，不是当前页条数 | 插件生成的 count 查询，即 `pageInfo.getTotal()` | 算总页数、分页组件显示总条数 |
+| `total` | `Long` | 满足条件的总记录数，不是当前页条数 | 插件生成的 count 查询，即 `pageInfo.getTotal()` | 算总页数、显示总条数 |
 | `rows` | `List<T>` | 当前页的数据列表 | 被改写的列表查询，即 `pageInfo.getList()` | 表格的数据源 |
-
-```java
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class PageBean {
-    private Long total;
-    private List<Emp> rows;
-}
-```
 
 ```json
 {
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "total": 42,
-    "rows": [
-      {
-        "id": 1,
-        "name": "张三",
-        "gender": 1,
-        "job": 2,
-        "entryDate": "2024-03-01",
-        "deptId": 2,
-        "deptName": "研发部"
-      }
-    ]
-  }
+  "code": 1, "msg": "success",
+  "data": { "total": 42, "rows": [ { "id": 1, "name": "张三", "deptId": 2, "deptName": "研发部" } ] }
 }
 ```
-
-没有数据时必须返回 `rows: []` 而不是 `null`，否则前端表格组件可能直接抛错，分页组件也拿不到数字。
 
 ### 4.6 PageHelper 注意点
 
 - `PageHelper.startPage(page, pageSize)` 必须紧挨着真正执行的查询，中间不能插入其他数据库操作。
-- 分页参数只对紧接着的第一条查询生效，查询执行完参数就被消费掉了。
-- 如果在 `startPage` 和员工查询之间先查了部门列表，分页参数会被那条 SQL 用掉，员工查询就退化成全量查询。
-- `new PageInfo<>(empList)` 必须使用分页查询返回的那个 List，换成别的 List 就拿不到总数。
-- 分页参数存在线程本地变量里，只在同一个线程内有效，异步线程执行查询不会自动继承。
-- 总记录数的 count 语句由插件根据列表 SQL 自动生成，不要再自己写一条 count 查询，否则等于白统计一次。
-- 一旦发现查出来的数据量不对，先检查 `startPage` 和查询之间是否有别的 Mapper 调用。
+- 分页参数只对紧接着的第一条查询生效，执行完就被消费掉。
+- 在 `startPage` 和员工查询之间先查了别的表，分页参数会被那条 SQL 用掉，员工查询就退化成全量查询。
+- `new PageInfo<>(empList)` 必须用分页查询返回的那个 List，否则拿不到总数。
+- 分页参数保存在线程本地变量里，只在同一个线程内有效，异步线程不会自动继承；count 语句由插件根据列表 SQL 自动生成，不要再自己写一条 count 查询。
 
 ## 5. 动态 SQL 与批量操作
 
-动态 SQL 的作用是让一条 Mapper 语句适应不同的参数组合，例如同一个列表接口既要支持“只按姓名查”，也要支持“姓名加性别加日期区间一起查”，不必为每种组合写一条 SQL。
+动态 SQL 让一条 Mapper 语句适应不同的参数组合，不必为“只按姓名查”“姓名加性别加日期区间查”分别写一条 SQL。
 
 ### 5.1 `<if>` 与 `<where>`
 
-- `<if test="条件">`：条件成立才把这段 SQL 拼进去，`test` 里写的是参数对象的属性名，多个条件用 `and`、`or` 连接。
-- `<where>`：自动去掉开头多余的 `AND` 或 `OR`，并在所有条件都不成立时把整个 `WHERE` 关键字一起去掉。
+`<if test="条件">` 决定这段 SQL 拼不拼，`test` 里写参数对象的属性名，多个条件用 `and` 连接；`<where>` 自动去掉开头多余的 `AND`，并在所有条件都不成立时去掉整个 `WHERE`。
 
 ```xml
 <select id="page" resultType="com.example.pojo.Emp">
   SELECT e.*, d.name AS deptName
   FROM emp e LEFT JOIN dept d ON e.dept_id = d.id
   <where>
-    <if test="name != null and name != ''">
-      e.name LIKE CONCAT('%', #{name}, '%')
-    </if>
+    <if test="name != null and name != ''">e.name LIKE CONCAT('%', #{name}, '%')</if>
     <if test="gender != null">AND e.gender = #{gender}</if>
-    <if test="begin != null and end != null">
-      AND e.entry_date BETWEEN #{begin} AND #{end}
-    </if>
+    <if test="begin != null and end != null">AND e.entry_date BETWEEN #{begin} AND #{end}</if>
   </where>
   ORDER BY e.update_time DESC, e.id DESC
 </select>
 ```
 
-`test` 里判断字符串要写成 `!= null and name != ''`，两个判断缺一不可：
+判断字符串要写成 `!= null and name != ''`，两个判断缺一不可：
 
 | 写法 | 后果 |
 |---|---|
 | 只写 `name != null` | 前端传空串 `name=` 时条件成立，SQL 变成 `LIKE '%%'`，等于没筛却白扫一遍表 |
 | 只写 `name != ''` | 参数为 `null` 时属性访问没有意义，还可能在拼接时出错 |
-| 写 `name != null and name != ''` | `null` 和空串都被挡掉，SQL 干净 |
 
 ### 5.2 `<foreach>` 做批量删除
 
-批量删除传入的是 ID 集合，`IN` 后面的元素个数不固定，用 `<foreach>` 在运行时展开：
+`IN` 后面的元素个数不固定，用 `<foreach>` 在运行时展开：
 
 ```xml
 <delete id="deleteByIds">
@@ -443,20 +375,13 @@ public class PageBean {
 </delete>
 ```
 
-四个属性的含义：
-
 | 属性 | 作用 | 注意点 |
 |---|---|---|
-| `collection` | 要遍历的集合名 | 接口用 `@Param("ids")` 命名时必须一致；不写 `@Param` 时 List 叫 `list`、数组叫 `array` |
-| `item` | 每次遍历出来的临时变量名 | 用它写 `#{id}` 接收当前元素 |
-| `open` / `close` | 整段内容的前后包裹符 | 这里拼出括号 |
-| `separator` | 元素之间的分隔符 | 这里拼出逗号，不能写成 `, ` 带空格 |
+| `collection` | 要遍历的集合名 | 与 `@Param("ids")` 的名字一致；不写 `@Param` 时 List 叫 `list`、数组叫 `array` |
+| `item` | 每次遍历出来的临时变量名 | 用 `#{id}` 取当前元素 |
+| `open` / `close` / `separator` | 包裹符和元素分隔符 | 这里拼出括号和逗号 |
 
-对应的 Mapper 接口：
-
-```java
-void deleteByIds(@Param("ids") List<Integer> ids);
-```
+Mapper 接口写成 `void deleteByIds(@Param("ids") List<Integer> ids);`。
 
 ### 5.3 `<set>` 与 `<if>` 只更新提交的字段
 
@@ -475,29 +400,22 @@ void deleteByIds(@Param("ids") List<Integer> ids);
 </update>
 ```
 
-`<set>` 会自动去掉最后多出来的逗号，并保证一个条件都不成立时也不生成裸的 `SET` 关键字。逗号要写在每个 `<if>` 内部的结尾，写法固定成 `列名 = #{属性名},`。
+`<set>` 会自动去掉最后多出来的逗号，并保证一个字段都没提交时不生成裸的 `SET` 关键字，所以逗号统一写在每个 `<if>` 内部的结尾。
 
 ### 5.4 为什么批量删除用 `<foreach>` 而不是拼字符串
 
-| 做法 | 安全性 | 可读性 | 性能 |
-|---|---|---|---|
-| `<foreach>` 生成 `IN (#{id}, #{id})` | 参数走占位符，不担心注入 | 好，集合和 SQL 结构分开 | 一次 SQL 完成，能走主键索引 |
-| Java 里拼 `"1,2,3"` 再用 `${ids}` 拼进 SQL | 有注入风险，用户输入可能改变 SQL 语义 | 差，需要人肉审查字符串 | 同样一次 SQL，但风险高 |
-| 循环里逐条删除 | 安全 | 一般 | N 次数据库往返，慢且不好控制事务 |
-
-`<foreach>` 生成的每一段都是 `#{id}`，最终走 `PreparedStatement` 的参数占位符，值永远只是值；而拼字符串的结果会被数据库当成 SQL 的一部分解析，输入可控时就不安全了。
+`<foreach>` 生成的每一段都是 `#{id}`，最终走 `PreparedStatement` 占位符，值永远只是值；而在 Java 里拼出 `"1,2,3"` 再用 `${ids}` 替换，结果会被数据库当成 SQL 的一部分解析，用户输入可控时就能改变 SQL 语义。循环里逐条删除虽然安全，但会产生 N 次数据库往返，事务边界也更难控制。
 
 ### 5.5 `#{}` 与 `${}` 的区别
 
 | 对比项 | `#{}` | `${}` |
 |---|---|---|
 | 处理方式 | 预编译参数，SQL 里生成 `?` 占位符 | 直接字符串替换，拼进 SQL 文本 |
-| 是否防注入 | 防，值不会被当成 SQL 解析 | 不防，输入可控就有风险 |
-| 类型处理 | JDBC 按类型处理，字符串和日期自动加引号 | 原样拼接，需要自己保证引号正确 |
-| 常见用途 | 所有参数值，如 `#{name}`、`#{id}`、`#{begin}` | 表名、列名、`ORDER BY` 字段等结构部分 |
-| 注入示例 | 输入 `' OR '1'='1` 只是一个普通字符串 | 同样的输入会变成 `WHERE name = '' OR '1'='1'`，条件被绕过 |
+| 是否防注入 | 防，值不会当成 SQL 解析 | 不防，输入可控就有风险 |
+| 常见用途 | 所有参数值，如 `#{name}`、`#{id}` | 表名、列名、`ORDER BY` 字段等结构部分 |
+| 注入示例 | 输入 `' OR '1'='1` 只是一个普通字符串 | 同样的输入变成 `WHERE name = '' OR '1'='1'`，条件被绕过 |
 
-结论：参数值一律用 `#{}`；只有表名、排序列这类无法预编译的内容才用 `${}`，而且必须在 Service 层用白名单校验，只允许固定几个取值通过。
+结论：参数值一律用 `#{}`；只有表名、排序列这类无法预编译的内容才用 `${}`，而且要先用白名单校验，只允许固定几个取值通过。
 
 ## 6. 新增员工与元数据字段
 
@@ -516,9 +434,8 @@ void deleteByIds(@Param("ids") List<Integer> ids);
 
 ```java
 public void save(Emp emp) {
-    LocalDateTime now = LocalDateTime.now();
-    emp.setCreateTime(now);
-    emp.setUpdateTime(now);
+    emp.setCreateTime(LocalDateTime.now());
+    emp.setUpdateTime(LocalDateTime.now());
     Long currentId = BaseContext.getCurrentId();
     emp.setCreateUser(currentId);
     emp.setUpdateUser(currentId);
@@ -526,9 +443,7 @@ public void save(Emp emp) {
 }
 ```
 
-当前登录用户的 ID 在第 12 章的拦截器里解析 JWT 之后已经放进了 ThreadLocal，第 13 章的 `BaseContext` 就是它的访问入口，这里直接取用即可，不必再关心 ThreadLocal 内部的实现细节。
-
-如果每个新增、修改方法都抄这一遍赋值代码，很快就会出现漏字段。更好的做法是把它抽到统一位置：用 AOP 在 Service 的增改方法前统一填充，或者用自定义注解加类型处理器在 Mapper 层统一处理。另外 `update_time` 建议建索引，因为员工列表正是按它排序的。
+当前登录用户的 ID 在第 12 章的拦截器里解析 JWT 之后已经放进了 ThreadLocal，第 13 章的 `BaseContext` 就是它的访问入口。如果每个新增、修改方法都抄这一遍赋值代码，很快就会出现漏字段，更好的做法是用 AOP 在 Service 的增改方法前统一填充。另外 `update_time` 建议建索引，因为员工列表正是按它排序的。
 
 ### 6.2 主键回填：@Options
 
@@ -541,14 +456,7 @@ public void save(Emp emp) {
 void insert(Emp emp);
 ```
 
-| 属性 | 含义 | 注意点 |
-|---|---|---|
-| `useGeneratedKeys` | 使用数据库自增生成的主键 | 只对自增主键有效 |
-| `keyProperty` | 主键回填到哪个属性 | 写实体类属性名 `id`，不是列名 |
-
-XML 写法把这两个属性写在 `<insert>` 标签上，效果相同：`<insert id="insert" useGeneratedKeys="true" keyProperty="id">`。
-
-执行完插入后，直接 `emp.getId()` 就能拿到新主键，不需要再查一次数据库。批量插入时主键回填的行为和驱动、写法有关，不能想当然认为每条都能回填，需要实际验证后再依赖它。
+`useGeneratedKeys = true` 表示主键由数据库自增生成，`keyProperty = "id"` 表示把主键回填到实体类的 `id` 属性（写属性名，不是列名）。XML 写法把这两个属性写在 `<insert>` 标签上即可。执行完插入后，直接 `emp.getId()` 就能拿到新主键，不需要再查一次数据库；批量插入时主键回填的行为和驱动、写法有关，不能想当然认为每条都能回填，需要实际验证后再依赖它。
 
 ## 7. 员工列表要注意的细节
 
@@ -560,9 +468,8 @@ XML 写法把这两个属性写在 `<insert>` 标签上，效果相同：`<inser
 |---|---|---|---|
 | 1 | `SELECT` | 选择返回的列 | 只查列表需要的列，别用 `SELECT *` 带出大字段 |
 | 2 | `FROM emp e LEFT JOIN dept d ON ...` | 主表和从表连接 | 连接条件和从表条件都写在 `ON` |
-| 3 | `<where>` 内的 `<if>` | 筛选条件 | 每个 `<if>` 内部以 `AND` 开头，开头多余的由 `<where>` 去掉 |
-| 4 | `ORDER BY` | 排序 | 必须稳定，业务字段后面加主键兜底 |
-| 5 | `LIMIT` | 取当前页 | 由 PageHelper 自动追加，不要自己写 |
+| 3 | `<where>` 内的 `<if>` | 筛选条件 | 每个 `<if>` 内部以 `AND` 开头，多余的由 `<where>` 去掉 |
+| 4 | `ORDER BY` | 排序 | 必须稳定，业务字段后面加主键兜底，`LIMIT` 由 PageHelper 自动追加 |
 
 筛选条件只影响 `WHERE`，会被同时应用到 count 语句和列表语句；`LIMIT` 由插件拼在 `ORDER BY` 之后。新增筛选条件时只动 `<where>` 内部，别去碰 `ORDER BY` 和 `LIMIT` 的位置。如果列表排序字段由前端传参决定，必须做白名单校验，因为它最终是拼进 SQL 的结构部分。
 
@@ -574,9 +481,7 @@ XML 写法把这两个属性写在 `<insert>` 标签上，效果相同：`<inser
 | `entry_date >= #{begin} AND entry_date <= #{end}` | 两端都包含 | 与 BETWEEN 等价，条件多时换行更清晰 |
 | `entry_date > #{begin} AND entry_date < #{end}` | 两端都不包含 | 确实需要开区间时才用 |
 
-BETWEEN 就是 `>=` 加 `<=` 的简写，用哪个只是可读性差别。真正的坑在 `datetime` 类型上：如果列是 `datetime`，而前端只传 `yyyy-MM-dd`，那么 `end = '2024-12-31'` 会被当成 `2024-12-31 00:00:00`，当天零点之后的数据全部漏掉。两种处理方式：把条件改成 `entry_date < DATE_ADD(#{end}, INTERVAL 1 DAY)`，或者让前端传完整的结束时间。
-
-日期区间通常成对出现，所以 `<if>` 要判断两个参数都不为空：`<if test="begin != null and end != null">`；只判断一个会让 SQL 缺少边界。
+BETWEEN 就是 `>=` 加 `<=` 的简写，用哪个只是可读性差别。真正的坑在 `datetime` 类型上：如果列是 `datetime`，而前端只传 `yyyy-MM-dd`，那么 `end = '2024-12-31'` 会被当成 `2024-12-31 00:00:00`，当天零点之后的数据全部漏掉。两种处理方式：把条件改成 `entry_date < DATE_ADD(#{end}, INTERVAL 1 DAY)`，或者让前端传完整的结束时间。日期区间通常成对出现，所以 `<if>` 要判断两个参数都不为空：`<if test="begin != null and end != null">`，只判断一个会让 SQL 缺少边界。
 
 ### 7.3 总记录数不用自己写 count
 
