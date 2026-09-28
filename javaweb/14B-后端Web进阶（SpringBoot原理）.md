@@ -274,7 +274,20 @@ public class OssAutoConfiguration {
 
 启动时加 `--debug` 可以查看条件评估报告；也可以检查依赖树、确认 `AutoConfiguration.imports` 是否打包进 JAR、检查配置前缀和当前 profile。遇到“Bean 找不到”时按“依赖是否存在 → 配置类是否被发现 → 条件是否满足 → Bean 是否被覆盖”的顺序排查。
 
-## 12. 联网核对与延伸阅读
+## 12. 本章总结
+
+1. Spring Boot 支持 `application.properties`、`application.yml` 和 `application.yaml`，同一属性不要在多个文件重复配置；配置合并遵循“距离运行环境越近优先级越高”，外部配置、环境变量、系统属性和命令行参数可以覆盖 JAR 包内的默认配置，具体顺序应以当前版本文档为准。
+2. Spring 启动时创建 IoC 容器，业务代码优先使用依赖注入而不是到处手动 `getBean`；第三方类不能直接加 `@Component`，要在配置类中用 `@Bean` 注册。
+3. Bean 默认作用域是 singleton，还有 prototype 以及 Web 环境的 request、session 等；Controller、Service、Mapper 应设计成无状态单例，不要把请求级数据放进成员变量。
+4. Starter 把一个场景常用的依赖组合起来，解决依赖配置繁琐和版本不兼容问题，但它最终仍是普通 Maven 依赖传递，不等于业务代码已经完成。
+5. 自动配置根据类路径中的依赖、配置属性和条件注解自动注册 Bean；`@SpringBootApplication` 组合了配置、自动配置和组件扫描，默认扫描启动类所在包及其子包，所以启动类要放在根包。
+6. 条件装配是“引入依赖后功能自动出现、同时又允许业务覆盖默认 Bean”的原因，常见条件包括类路径存在某个类、容器中还没有同类型 Bean、配置开关打开和 Profile 匹配。
+7. 自动配置的加载链路是：`@SpringBootApplication` 引入 `@EnableAutoConfiguration`，由 `ImportSelector` 读取候选配置文件，条件满足的自动配置类执行 `@Bean` 方法注册到 IoC 容器；Spring Boot 3.x 用 `AutoConfiguration.imports`，较老版本用 `spring.factories`，阅读旧讲义前要先确认版本。
+8. `@Import` 可以导入普通类、配置类或 `ImportSelector` 实现，`@EnableXxx` 通常只是把这些导入动作封装起来，便于业务项目一行启用。
+9. 自定义 Starter 的最小结构通常是 starter 模块只做依赖聚合，autoconfigure 模块放 `@ConfigurationProperties` 属性类和 `@AutoConfiguration` 自动配置类，用 `@ConditionalOnMissingBean` 允许业务项目覆盖默认实现。
+10. “Bean 找不到”的排查顺序是：依赖是否存在、配置类是否被发现、配置前缀与属性名是否正确、条件注解是否满足、是否与同类型 Bean 冲突或被条件排除；启动时加 `--debug` 可以查看条件评估报告。`@Value` 适合少量简单值，`@ConfigurationProperties` 适合一组有层次的配置。
+
+## 13. 联网核对与延伸阅读
 
 - [Spring Boot 外部化配置与属性优先级](https://docs.spring.io/spring-boot/reference/features/external-config.html)
 - [Spring Boot 配置属性](https://docs.spring.io/spring-boot/how-to/properties-and-configuration.html)

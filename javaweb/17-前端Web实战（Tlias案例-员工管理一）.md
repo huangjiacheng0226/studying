@@ -176,9 +176,9 @@ flowchart TD
 页面上的日期选择器可能绑定一个数组，例如 `date: [begin, end]`，而后端接口需要 `begin`、`end` 两个查询参数。可以监听数组并在请求前转换：
 
 ```javascript
-watch(() => searchEmp.value.date, value => {
-  searchEmp.value.begin = value?.[0] ?? ''
-  searchEmp.value.end = value?.[1] ?? ''
+watch(() => searchForm.value.date, value => {
+  searchForm.value.begin = value?.[0] ?? ''
+  searchForm.value.end = value?.[1] ?? ''
 })
 ```
 
@@ -251,7 +251,20 @@ sequenceDiagram
 
 上传校验至少包括 MIME 类型、文件大小和失败提示；服务端还要重新校验扩展名、内容类型和存储路径，避免仅依赖浏览器校验。若上传接口需要登录，记得给 `el-upload` 单独配置 Token（第 18 章会详细排查 401）。
 
-## 14. 联网核对与延伸阅读
+## 14. 本章总结
+
+1. 员工列表是“筛选条件加分页”的组合查询，前端至少维护 `searchForm`、`page`、`pageSize`、`total` 和 `tableData` 这组状态，后端返回 `total` 和 `rows`。
+2. `total` 是符合条件的全部记录数，不是当前页条数，分页条的范围要按 `total` 计算，不能拿它当本页数据量使用。
+3. 点击查询要先把 `page` 重置为 1 再请求，重置则是先恢复默认条件再走查询逻辑，否则会在旧页码上查询新条件而查不到数据。
+4. 分页参数从 1 开始，偏移量 `offset = (page - 1) * pageSize` 由后端计算，前端不要同时传 `page` 和 `offset`，否则接口含义重复。
+5. 查询总数和当前页数据必须使用完全相同的筛选条件，否则总数和行数对不上，分页条会显示错误的页数。
+6. `watch` 监听页码或日期范围可以自动触发查询，但初学阶段先用按钮和分页事件触发更稳；日期范围选择器绑定的是数组，要在请求前拆成 `begin`、`end` 两个参数，并保证自动查询和点击搜索二选一。
+7. 展示层的转换（例如性别数字转文字）不要修改原始数据，否则提交时会把展示文字当成数据库值写回。
+8. 动态工作经历用 `v-for` 渲染数组、用 `splice` 删除，`key` 优先使用页面临时键而不是数组下标，提交前还要移除仅供页面使用的字段。
+9. 部门下拉框是数据库动态数据要调接口加载，职位和性别这类固定字典可以用常量数组维护，两类数据的来源区分清楚。
+10. 前端校验只是用户体验，后端校验才是安全边界；新增员工和工作经历应在同一事务中写入，头像要先上传拿到 URL 再随员工表单提交。
+
+## 15. 联网核对与延伸阅读
 
 - [Vue Watchers](https://vuejs.org/guide/essentials/watchers.html)
 - [Element Plus Pagination](https://element-plus.org/en-US/component/pagination)

@@ -189,7 +189,20 @@ flowchart LR
 
 常见仓库角色包括 hosted（保存公司包）、proxy（代理中央仓库）和 group（对开发者提供统一入口）。账号密码应放在 `settings.xml` 的 `<servers>` 中，配合环境隔离或 CI 密钥管理，不要写入项目 `pom.xml`、提交到 Git，也不要在构建日志中打印。
 
-## 11. 联网核对与延伸阅读
+## 11. 本章总结
+
+1. Maven 基础解决单个项目的编译、测试和依赖管理，Maven 高级解决多模块拆分、统一版本、构建整个项目和共享内部组件。
+2. 分模块设计按职责拆分，典型结构是父工程 `tlias-parent` 加 `tlias-pojo`、`tlias-utils`、`tlias-web-management`；模块边界按职责划分，小项目应先保持简单，不要为拆分而拆分。
+3. 继承通过子工程的 `<parent>` 复用父工程 POM 配置，适合集中管理版本、插件和公共依赖；公共模块不要反向依赖业务模块，避免循环依赖。
+4. `dependencyManagement` 只锁定版本，不会自动把依赖加入子工程，子模块仍要在 `<dependencies>` 中声明实际使用的依赖，只是可以省略版本。
+5. 聚合通过 `<packaging>pom</packaging>` 加 `<modules>` 把多个模块组织成整体，执行一次命令就能构建全部子模块；聚合关注统一构建，继承关注配置复用，两者可以单独使用也可以同时使用。
+6. 私服是公司内部的远程 Maven 仓库，用于缓存中央仓库依赖、保存内部公共组件、控制依赖版本和发布权限，仓库角色通常分为 hosted、proxy 和 group。
+7. 构建命令的边界要分清：`package` 只生成 target 产物，`install` 安装到本机本地仓库供本机其他项目使用，`deploy` 发布到远程仓库供团队或 CI 使用。
+8. 聚合工程执行命令时由 Maven Reactor 收集模块、分析依赖图并拓扑排序，`<modules>` 的书写顺序不是唯一依据，真实依赖关系优先决定构建顺序；`-pl -am`、`-pl -amd`、`-rf` 分别用于构建指定模块及其依赖、构建依赖该模块的模块、从失败模块继续。
+9. `<dependencies>`、`<dependencyManagement>` 和 `<pluginManagement>` 职责不同：只有 `<dependencies>` 真正把依赖放进当前模块的类路径，插件还必须先在 `<plugins>` 中声明才会执行。
+10. 版本号带 `-SNAPSHOT` 表示开发中的快照版本，正式发布应使用不可覆盖的 Release 版本；私服账号密码要放在 `settings.xml` 的 `<servers>` 中，不要写入 `pom.xml`、提交到 Git 或打印在构建日志里。
+
+## 12. 联网核对与延伸阅读
 
 - [Maven 多模块与 Reactor](https://maven.apache.org/guides/mini/guide-multiple-modules.html)
 - [Maven POM：继承与聚合](https://maven.apache.org/guides/introduction/introduction-to-the-pom.html)

@@ -148,12 +148,19 @@ public class BaseContext {
 在登录校验拦截器中解析 JWT 后保存 ID，在请求完成后清理：
 
 ```java
-try {
-    Long id = JwtUtil.getId(token);
+@Override
+public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
+                         Object handler) {
+    Long id = JwtUtil.getId(request.getHeader("Authorization"));
     BaseContext.setCurrentId(id);
     return true;
-} finally {
-    // 可在 afterCompletion 中清理，避免线程池复用导致数据串请求
+}
+
+@Override
+public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                            Object handler, Exception ex) {
+    // 在请求结束时清理，避免线程池复用导致数据串请求
+    BaseContext.remove();
 }
 ```
 
@@ -285,11 +292,24 @@ ThreadLocal 提供的是“每个线程一份值”，不是跨线程传递机�
 
 ### 12.5 操作日志的事务取舍
 
-- **同事务写入**：业务成功日志一定存在，适合审计；日志插入失败可能导致主业务回滚。
-- **独立事务/异步写入**：日志故障不影响主业务，吞吐更高；但可能出现业务成功而日志延迟或丢失。
+- 同事务写入：业务成功日志一定存在，适合审计；日志插入失败可能导致主业务回滚。
+- 独立事务或异步写入：日志故障不影响主业务，吞吐更高；但可能出现业务成功而日志延迟或丢失。
 - 日志表至少应有操作者、操作时间、类名/方法名、请求参数摘要、耗时、结果状态和异常摘要，并对敏感字段脱敏。
 
-## 13. 联网核对与延伸阅读
+## 13. 本章总结
+
+1. AOP 把日志、权限、耗时统计、事务这类横切逻辑集中成切面，由框架自动织入，避免在每个业务方法里重复复制公共代码。
+2. 核心概念要分清：连接点是可以被 AOP 控制的方法执行，切入点是需要增强的连接点集合，通知是要执行的公共逻辑，切面是切入点与通知的组合，目标对象是被增强的原始对象。
+3. Spring AOP 通过代理对象生效，注入到 Controller 的通常是代理对象，代理先执行通知再调用目标方法；同一个类内部的方法自调用会绕过代理，导致切面不执行。
+4. 五类通知语义不同：`@Before` 在目标方法前执行，`@AfterReturning` 只在正常返回后执行，`@AfterThrowing` 只在抛异常时执行，`@After` 无论成败都执行，`@Around` 用 `proceed()` 决定目标方法是否执行，漏写 `proceed()` 目标方法就不会运行。
+5. 切入点表达式要尽量精确：`execution` 按返回值、包名、类名、方法名和参数匹配，配合自定义注解的 `@annotation` 写法更直观，重复表达式可用 `@Pointcut` 抽取，范围过大会把查询、定时任务或日志保存本身也拦进去。
+6. 多个切面同时匹配一个方法时用 `@Order` 控制顺序，数字越小优先级越高，设计时切面之间应避免相互依赖。
+7. ThreadLocal 是线程的局部变量容器而不是线程，可以让 Filter、Interceptor、切面和 Service 共享当前登录员工 ID。
+8. Web 容器使用线程池，线程不会随请求结束销毁，所以 ThreadLocal 必须在 `finally` 或 `afterCompletion` 中 `remove()`，否则可能造成用户信息泄露或串号；它也不是跨线程传递机制。
+9. Tlias 操作日志案例的链路是：定义 `@LogOperation` 注解并标注增删改方法，切面类用 `@Aspect` 与 `@Component` 交给 Spring 管理，环绕通知从 `BaseContext` 取当前员工，调用 `proceed()` 执行业务并记录操作时间、参数、结果和耗时。
+10. 日志写入的事务取舍按业务决定：同事务适合审计但日志失败可能回滚主业务，独立事务或异步写入吞吐更高但可能延迟或丢失；记录参数前必须做长度限制和脱敏，不能把密码或完整 Token 写进日志表。
+
+## 14. 联网核对与延伸阅读
 
 - [Spring AOP 核心概念](https://docs.spring.io/spring-framework/reference/core/aop/introduction-defn.html)
 - [Spring AOP 通知类型](https://docs.spring.io/spring-framework/reference/core/aop/ataspectj/advice.html)

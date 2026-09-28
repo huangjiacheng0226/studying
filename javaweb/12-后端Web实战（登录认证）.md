@@ -240,7 +240,7 @@ request.interceptors.response.use(
 ## 10. 与其他资料的对应关系
 
 - 《JavaWeb笔记》：第十四章“登录认证”。
-- 现有 10 份整理稿：第 10 份“日志、认证和请求拦截”可作为本章前置回顾。
+- 本仓库按 01 到 20 的顺序整理这套课程笔记，本篇是第 12 篇；第 10 篇“日志、认证和请求拦截”可作为本章前置回顾。
 - 后续第 13 章会使用本章的 JWT 和 ThreadLocal 记录当前登录员工。
 
 ## 11. 关键补充：一次请求到底怎样完成认证
@@ -333,7 +333,20 @@ sequenceDiagram
 
 前后端端口不同时，浏览器可能先发送 `OPTIONS` 预检请求。认证过滤器不能把合法的预检请求当成普通业务请求拦掉；同时服务端要正确返回 `Access-Control-Allow-Origin`、`Access-Control-Allow-Headers` 等 CORS 响应头。允许携带凭证时不能使用通配符 `*` 作为允许来源。
 
-## 12. 联网核对与延伸阅读
+## 12. 本章总结
+
+1. 登录只解决“确认你是谁”，登录校验解决“后续每次请求是否仍是同一个用户”，两个阶段要分开设计。
+2. HTTP 本身无状态，Cookie、Session、Token 都是会话跟踪方案：Cookie 存在浏览器、Session 存在服务端、Token 由客户端携带服务端验证，前后端分离项目通常选 Token。
+3. JWT 由 Header、Payload、Signature 三段用点号连接，前两段只是 Base64URL 编码而不是加密，签名只能证明没被改过，Payload 可被任何人解出，不能放密码、身份证号等敏感信息。
+4. 登录成功后服务端把 JWT 放进统一响应的 `data` 字段，前端保存到 `localStorage`，之后用 `Authorization: Bearer <token>` 请求头携带，请求头名称和格式必须前后端提前约定。
+5. 服务端校验 JWT 至少要看请求头格式、签名算法与密钥来源、`exp` 等时间声明、用户标识声明以及用户是否仍然有效，密钥应放在配置文件或环境变量中并设置明确过期时间。
+6. 密码不能明文比对，应保存 BCrypt/Argon2 这类带随机盐的哈希；密码哈希用于比对密码，JWT 签名密钥用于验证令牌完整性，两者不能混为一谈。
+7. Filter 属于 Servlet 层，拦截范围更底层更广，Interceptor 属于 Spring MVC，能获取 Handler 信息；登录校验两者都能实现，但执行时机和配置方式不同。
+8. 登录接口、静态资源和健康检查接口必须放行，否则会出现“登录也需要登录”的死循环；Filter 校验失败时应返回统一 JSON 错误结构并设置 `Content-Type: application/json;charset=UTF-8`。
+9. 前端用 Axios 请求拦截器自动携带 Token，用响应拦截器统一处理 401；401 表示未认证，403 表示已认证但没有权限，网络超时或服务不可达时不应误删本地 Token。
+10. 在 Filter 或 Interceptor 中写入 ThreadLocal 后必须在 `finally` 或 `afterCompletion` 中清理，前后端端口不同时还要放行 `OPTIONS` 预检请求并正确返回 CORS 响应头。
+
+## 13. 联网核对与延伸阅读
 
 - [RFC 7519：JSON Web Token](https://datatracker.ietf.org/doc/html/rfc7519)
 - [Spring Boot 外部化配置](https://docs.spring.io/spring-boot/reference/features/external-config.html)

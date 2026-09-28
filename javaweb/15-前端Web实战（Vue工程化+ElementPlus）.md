@@ -261,7 +261,16 @@ npm run preview  # 只用于本地预览，不是生产服务器
 
 Vite 默认输出 `dist`。开发环境的 `/api` 代理只在 Vite 开发服务器生效，部署到 Nginx 后必须配置反向代理或把生产 API 地址写入环境变量（如 `VITE_API_BASE_URL`）。不要把带密钥的变量放进 `VITE_` 前缀，因为它们会被打包到浏览器端。
 
-## 13. 联网核对与延伸阅读
+## 13. 本章总结
+
+1. npm 负责依赖下载、脚本执行和版本管理，Vue 3 项目用 `npm create vue@latest` 创建，日常命令是 `npm install`、`npm run dev`、`npm run build`。
+2. 页面用组合式 API 编写：`ref`、`reactive` 管理状态，`computed` 计算派生值，`watch` 处理副作用。
+3. Element Plus 提供表格、分页、对话框和表单；前端校验只提升体验，后端校验不可省略。
+4. Axios 在 `src/utils/request.js` 中统一封装 `baseURL`、Token 和错误处理。
+5. 路由把 URL 映射到组件，前端守卫只是体验层的提前拦截，真正的认证授权必须由后端完成。
+6. `npm run build` 生成 `dist`，生产环境由 Nginx 提供静态文件，并配置 history 模式回退。
+
+## 14. 联网核对与延伸阅读
 
 - [Vue 3 Composition API](https://vuejs.org/guide/extras/composition-api-faq)
 - [Vue 生命周期](https://vuejs.org/guide/essentials/lifecycle.html)

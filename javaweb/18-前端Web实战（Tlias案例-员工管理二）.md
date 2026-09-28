@@ -211,7 +211,7 @@ flowchart TD
 ```javascript
 let redirecting = false
 
-if (error.response?.status === 401 && !config.url?.includes('/login')) {
+if (error.response?.status === 401 && !error.config?.url?.includes('/login')) {
   localStorage.removeItem('token')
   if (!redirecting) {
     redirecting = true
@@ -271,7 +271,20 @@ flowchart LR
 
 `vite preview` 只适合验证构建产物，不是生产服务；生产环境要检查静态资源路径、API 反向代理、HTTPS、压缩缓存和日志。若前端使用 history 路由，所有未知页面路径都要回退到 `index.html`，但 `/api/` 必须优先转发给后端。
 
-## 14. 联网核对与延伸阅读
+## 14. 本章总结
+
+1. 新增和修改可以共用一份表单，用 `form.id` 判断该调 `POST` 还是 `PUT`；打开新增要清空 ID 和经历数组，打开编辑必须先查详情，不能复用上一条员工数据。
+2. 编辑回显要把基本信息和 `exprList` 一起赋给表单，并检查日期、性别、部门 ID 的类型是否和表单组件匹配。
+3. 单个删除的流程是确认、调接口、提示结果、刷新列表，请求期间要禁用按钮，后端也要保证重复请求不会产生错误副作用。
+4. 批量删除用 `selection-change` 收集选中行的 ID，没有选择时直接提示而不发空请求；删除当前页最后一条后页码可能超出总页数，要按新的总数把 `page` 收敛到最后一页。
+5. 登录成功后把 JWT 存进 `localStorage` 并跳转首页；`localStorage` 使用简单，但页面存在 XSS 漏洞时 Token 可能被读取，生产项目要结合安全策略评估存放位置。
+6. 请求拦截器统一设置 `Authorization` 头，请求头名称和 `Bearer` 前缀必须与后端校验代码一致，否则后端会把所有请求判为未认证。
+7. 响应拦截器统一处理 401：清理 Token 并跳登录页，同时排除 `/login` 自身并加跳转锁，避免登录失败时来回跳转；401 表示未认证，403 表示无权限，两者不能混用。
+8. Element Plus 的 `el-upload` 使用自己的请求方式，不经过 Axios 拦截器，因此要单独在 `headers` 中带 Token 或改用自定义上传函数，且不要把 Token 写死在模板或仓库里。
+9. 退出只是清理客户端凭证；要让旧 Token 立即失效，还需要服务端黑名单、短过期时间或其他撤销机制。
+10. 前端构建产物在 `dist`，Nginx 要指向它并用 `try_files` 把前端路由回退到 `index.html`，同时把 `/api` 反向代理到后端；部署后重点验证刷新子路由、登录、图片上传和跨域请求。
+
+## 15. 联网核对与延伸阅读
 
 - [Vue Router 导航守卫](https://router.vuejs.org/guide/advanced/navigation-guards.html)
 - [Element Plus Table](https://element-plus.org/en-US/component/table)
