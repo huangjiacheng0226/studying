@@ -1,10 +1,10 @@
 # Redis 快速入门：基础认识与环境准备
 
+这一篇先讲清楚 Redis 的定位：它属于 NoSQL，和关系型数据库差在哪里；命令执行为什么选择单线程，4.0 和 6.0 又各自在什么地方引入了多线程；然后在 Linux 上完成安装、配置和连接；最后约定 Key 的命名规范和 Java 客户端的选型。
+
 ## 1.1 Redis 是什么
 
-Redis（Remote Dictionary Server）是一个开源的内存数据存储系统。它把数据主要保存在内存中，因此读写速度很快，同时也支持把数据持久化到磁盘。
-
-Redis 常被用作：
+Redis（Remote Dictionary Server）是一个开源的内存数据存储系统。它把数据主要保存在内存中，因此读写速度很快，同时也支持把数据持久化到磁盘。Redis 常被用作：
 
 - 缓存：减少数据库访问压力。
 - 会话存储：保存登录状态、验证码等临时数据。
@@ -20,102 +20,245 @@ Redis 常被用作：
 | 持久化 | 可以将内存数据保存到磁盘 | 数据恢复 |
 | 单线程命令执行 | 命令执行过程具有原子性，减少并发竞争 | 计数、库存扣减 |
 | 高可用与集群 | 支持主从复制、哨兵和集群 | 分布式系统 |
+| 多语言客户端 | 官方提供多种语言的客户端库 | Java、Python、Go 等 |
 
-## 1.3 安装 Redis
+## 1.3 NoSQL 与关系型数据库的六维差异
 
-### 1.3.1 安装依赖
+NoSQL（Not Only SQL）是非关系型数据库的统称，是相对于传统关系型数据库而言的一类数据库。两者的差异可以归纳为六个维度：
 
-Redis 服务端运行前需要准备对应的操作系统环境。Windows 初学者可以使用 Redis 的兼容发行版或通过 WSL 安装 Linux；Linux 和 macOS 可以直接使用系统包管理器。
+| 对比维度 | SQL（关系型数据库） | NoSQL（非关系型数据库） |
+| --- | --- | --- |
+| 数据结构 | 结构化：表有严格的字段名、字段类型和字段约束 | 非结构化：约束松散，可以是键值型、文档型、图类型等 |
+| 数据关联 | 表与表之间存在关联，例如外键 | 不存在关联，关系由业务逻辑或数据之间的耦合维护 |
+| 查询方式 | 统一使用 SQL | 没有统一语法，Redis 与 MongoDB 的查询语法就不一样 |
+| 事务特性 | 满足事务的 ACID 特性 | 大多不支持完整事务，只能维持 BASE 意义上的基本一致性 |
+| 存储方式 | 数据存放在磁盘，性能受影响 | 数据存放在内存，性能高 |
+| 扩展性 | 集群一般是主从模式，主从数据一致，主要作用是备份，属于垂直扩展 | 可以把数据拆分到不同服务器，保存海量数据，属于水平扩展 |
 
-Linux（以 Ubuntu 为例）：
+这六点差异决定了各自的适用场景：
 
-```bash
-# 更新软件包索引
-sudo apt update
+| 使用场景 | 更适合 | 原因 |
+| --- | --- | --- |
+| 数据结构固定，对数据安全性、一致性要求高 | 关系型数据库 | 有约束、有事务，数据不容易写坏 |
+| 数据结构不固定，对安全性、一致性要求不高，但要求高性能 | NoSQL | 无约束、内存读写，容易横向扩展 |
+| 海量数据且增长快 | NoSQL | 水平扩展只需加机器，不受表关联拖累 |
 
-# 安装 Redis 服务端和命令行客户端
-sudo apt install redis-server redis-tools
+关系型数据库想做水平扩展，会因为表之间的关联带来麻烦；NoSQL 没有关联，拆分和扩容都更容易。两者不是替代关系，实际项目里经常同时使用。
+
+## 1.4 Redis 的单线程与多线程模型
+
+### 1.4.1 为什么命令执行选择单线程
+
+严格来说，Redis 的核心业务部分（命令处理）是单线程的，但整个 Redis 进程并不是只有一个线程。选择单线程的原因：
+
+- Redis 是纯内存操作（抛开持久化不谈），执行速度非常快，性能瓶颈在网络延迟而不是执行速度，多线程并不会带来巨大的性能提升。
+- 多线程会带来过多的上下文切换，产生不必要的开销。
+- 引入多线程就要面对线程安全问题，必须引入线程锁这类手段，实现复杂度升高，性能也会大打折扣。
+
+单线程还有一个附带好处：命令逐个执行，所以单个命令天然具有原子性。
+
+### 1.4.2 两个版本引入的多线程
+
+Redis 4.0 引入了多线程异步处理一些耗时较长的任务，例如异步删除命令 `UNLINK`。删除包含大量元素的大 key 时，同步释放内存会长时间阻塞主线程，`UNLINK` 把 key 从字典中摘掉后立即返回，真正的内存释放交给后台线程。
+
+Redis 6.0 在核心网络模型中引入多线程，进一步提高对多核 CPU 的利用率。真正影响性能的是 IO：从客户端 socket 读出命令是网络 IO 的读操作，把结果写回 socket 是网络 IO 的写操作。6.0 让读取并解析命令、写回响应结果这两个阶段可以使用多线程，核心的命令执行和 IO 多路复用仍由主线程完成，并且需要开启 IO 线程才会生效。
+
+```mermaid
+flowchart LR
+    A[客户端连接] --> B[主线程：IO 多路复用监听 FD]
+    B --> C[IO 线程：读取并解析命令]
+    C --> D[主线程：执行命令]
+    D --> E[IO 线程：写回响应]
+    E --> F[客户端]
 ```
 
-macOS（使用 Homebrew）：
+### 1.4.3 主线程与其他线程的分工
+
+| 工作内容 | 执行者 | 说明 |
+| --- | --- | --- |
+| 监听端口、建立连接、分发事件 | 主线程 | 通过 IO 多路复用完成，单线程足够 |
+| 命令执行与内存数据结构读写 | 主线程 | 逐个执行，因此单个命令具有原子性 |
+| 读取请求并解析命令 | IO 线程（6.0 起，可选） | 分担网络读入，需要开启才生效 |
+| 写回响应结果 | IO 线程（6.0 起，可选） | 与解析命令对称的另一半 IO 工作 |
+| 异步删除大 key 等懒删除任务 | 后台线程（4.0 起） | 例如 `UNLINK` |
+| 持久化 | 后台子进程 | fork 出子进程完成 RDB 和 AOF 重写 |
+
+## 1.5 安装 Redis
+
+Redis 官方没有提供 Windows 版本的安装包，所以服务端一般安装在 Linux 上。这一节以 Linux 源码编译为主线，包管理器方式作为补充。
+
+### 1.5.1 安装依赖
+
+源码编译需要 gcc，执行测试脚本需要 tcl：
 
 ```bash
-# 安装 Homebrew 后执行
-brew install redis
+# CentOS 等使用 yum 的系统
+yum install -y gcc tcl
+# Ubuntu、Debian 等使用 apt 的系统
+sudo apt install -y build-essential tcl
 ```
 
-Windows 如果使用 WSL，可以先在 WSL 中执行 Ubuntu 安装步骤。也可以安装 Redis 的 Windows 兼容版本，并确保 `redis-server.exe` 和 `redis-cli.exe` 所在目录已加入 PATH。
-
-### 1.3.2 上传并解压安装包
-
-在 Linux 中也可以下载源码压缩包后编译安装：
+### 1.5.2 解压与编译安装
 
 ```bash
-# 下载源码压缩包（版本号仅作示例）
+# 下载源码包（版本号仅作示例）
 wget https://download.redis.io/releases/redis-7.2.5.tar.gz
-
 # 解压并进入目录
 tar -zxvf redis-7.2.5.tar.gz
 cd redis-7.2.5
-
-# 编译 Redis
+# 编译
 make
+# 安装，把可执行文件复制到默认安装路径 /usr/local/bin
+make install
 ```
 
-实际学习时优先使用包管理器安装，步骤更少；源码安装适合需要指定版本或研究编译过程的场景。
+`make` 没有报错就说明编译成功。安装完成后，`/usr/local/bin` 下会出现三个可执行文件，在任意目录都能直接运行：
 
-### 1.3.3 启动
+| 可执行文件 | 作用 |
+| --- | --- |
+| `redis-server` | Redis 服务端启动脚本 |
+| `redis-cli` | Redis 命令行客户端 |
+| `redis-sentinel` | Redis 哨兵启动脚本 |
+
+### 1.5.3 redis.conf 关键配置项
+
+安装目录下自带 `redis.conf`，修改前先备份，便于出错后恢复：
 
 ```bash
-# 直接启动 Redis 服务
-redis-server
-
-# Linux 使用 systemd 管理服务
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
+# 进入安装目录并备份配置文件
+cd /usr/local/src/redis-7.2.5
+cp redis.conf redis.conf.bck
 ```
 
-启动后默认监听 `6379` 端口。可以使用 `redis-cli ping` 检查服务是否正常。
+常用配置项：
 
-## 1.4 Redis 客户端
+```conf
+# 允许访问的地址，默认 127.0.0.1 只能在本地访问，改为 0.0.0.0 后可以在任意 IP 访问
+bind 0.0.0.0
+# 守护进程，改为 yes 后 Redis 以后台方式运行
+daemonize yes
+# 访问密码，设置后访问 Redis 必须输入密码
+requirepass 123321
+# 监听端口
+port 6379
+# 工作目录，日志、持久化等文件会保存在这个目录
+dir /usr/local/src/redis-7.2.5
+# 数据库数量，默认 16 个，编号 0~15，设置为 1 表示只使用 1 个库
+databases 16
+# Redis 能够使用的最大内存
+maxmemory 512mb
+# 日志文件，默认为空表示不记录日志，可以指定日志文件名
+logfile "redis.log"
+```
 
-### 1.4.1 命令行客户端
+每个配置项的作用与常见取值：
 
-命令行客户端是学习 Redis 最直接的工具：
+| 配置项 | 作用 | 常见取值 |
+| --- | --- | --- |
+| `bind` | 限制可以访问 Redis 的本机网卡地址 | 默认 `127.0.0.1` 只允许本机；`0.0.0.0` 允许任意 IP，生产环境不要直接这样设置 |
+| `daemonize` | 是否以后台守护进程方式运行 | 默认 `no`，前台运行会阻塞会话窗口；后台运行改为 `yes` |
+| `requirepass` | 设置访问密码 | 默认被注释，即无密码；设置后连接需要认证 |
+| `maxmemory` | Redis 可以使用的最大内存 | 默认不限制；常见做法是设置 512mb 或按机器内存比例取值 |
+| `databases` | 数据库的个数 | 默认 16，编号 0~15，用 `select` 切换；设置为 1 表示只用一个库 |
+| `logfile` | 日志文件名 | 默认为空，表示不记录日志；可以指定为 `redis.log` |
+| `dir` | 工作目录 | 默认 `.`，即启动时所在目录；日志和持久化文件都保存在这里 |
+
+### 1.5.4 配置开机自启
+
+在 `/etc/systemd/system/redis.service` 中新建系统服务文件：
+
+```conf
+[Unit]
+Description=redis-server
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/redis-server /usr/local/src/redis-7.2.5/redis.conf
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`Type=forking` 对应配置文件中的 `daemonize yes`，两者要配套使用。之后重载系统服务并设置为开机自启：
+
+```bash
+# 重载系统服务
+systemctl daemon-reload
+# 设置开机自启，也可以用 disable 取消
+systemctl enable redis
+# 启动、停止、重启、查看状态
+systemctl start redis
+systemctl stop redis
+systemctl restart redis
+systemctl status redis
+```
+
+### 1.5.5 启动与停止
+
+```bash
+# 前台启动，会阻塞当前会话窗口，关闭窗口或按 Ctrl + C 则 Redis 停止，仅用于临时调试
+redis-server
+# 指定配置文件启动，这是推荐方式
+redis-server redis.conf
+# 停止服务，配置了密码时通过 -u 指定
+redis-cli -u 123321 shutdown
+```
+
+启动后默认监听 `6379` 端口，`redis-cli ping` 返回 `PONG` 说明服务正常。
+
+### 1.5.6 包管理器安装（补充）
+
+如果只是快速体验，用系统包管理器安装更省事，这是一条补充路径；需要指定版本或者研究编译过程时，仍然推荐源码编译。
+
+```bash
+# Ubuntu、Debian
+sudo apt update
+sudo apt install redis-server redis-tools
+# macOS，需要先安装 Homebrew
+brew install redis
+```
+
+Windows 可以使用 WSL，在 WSL 里按 Ubuntu 的步骤安装；或者安装 Redis 的 Windows 兼容版本，并确保 `redis-server.exe` 和 `redis-cli.exe` 所在目录已加入 PATH。
+
+## 1.6 Redis 客户端
+
+### 1.6.1 命令行客户端
 
 ```bash
 # 连接本机默认端口
 redis-cli
-
-# 指定主机和端口
-redis-cli -h 127.0.0.1 -p 6379
-
+# 指定主机、端口和密码
+redis-cli -h 127.0.0.1 -p 6379 -a 123321
 # 测试连接，返回 PONG 表示成功
 redis-cli ping
+# 选择 0 号库，默认有 16 个库，编号 0~15
+select 0
 ```
 
-连接成功后会看到类似 `127.0.0.1:6379>` 的提示符。
+连接成功后会看到类似 `127.0.0.1:6379>` 的提示符。如果连接不上，先检查服务是否启动、防火墙是否放行端口。
 
-### 1.4.2 图形化客户端
+### 1.6.2 图形化客户端
 
-图形化客户端可以查看 key、数据类型、过期时间和服务器信息，适合观察数据，但不能替代命令行学习。常见工具包括 Redis Insight 等。
+图形化客户端可以查看 key、数据类型、过期时间和服务器信息，适合观察数据，但不能替代命令行学习。常见工具包括 Redis Insight、Redis Desktop Manager 等，连接时需要填写主机地址和端口，启用了 ACL 或设置了密码时还要填写用户名与密码。
 
-使用图形化客户端时通常填写：
+建议初学阶段先用命令行完成 `SET`、`GET`、`DEL`、`TTL` 等命令，再用图形化工具观察命令产生的数据。
 
-| 配置项 | 示例 | 说明 |
-| --- | --- | --- |
-| Host | `127.0.0.1` | Redis 服务地址 |
-| Port | `6379` | Redis 默认端口 |
-| Username | 留空或配置值 | 启用 ACL 时填写 |
-| Password | 留空或配置值 | 设置密码后填写 |
+### 1.6.3 Java 客户端三选一
 
-连接后可以新建 key、查看 value、执行命令和查看内存使用情况。
+Redis 官网提供了各种语言的客户端，Java 中比较推荐的有三种，它们的定位并不相同：
 
-### 1.4.3 安装和使用
+| 客户端 | 实现方式 | 线程安全 | 功能范围 | 适用场景 |
+| --- | --- | --- | --- | --- |
+| Jedis | 直连 Redis，以 Redis 命令作为方法名 | 线程不安全，多线程环境必须配合连接池 | 只做命令的封装 | 学习 Redis 命令、编写简单程序 |
+| Lettuce | 基于 Netty，支持同步、异步和响应式编程 | 线程安全，连接可以被多个线程共享 | 命令封装，支持哨兵、集群和管道模式 | Spring Boot 的默认客户端 |
+| Redisson | 基于 Redis 实现分布式的可伸缩 Java 数据结构 | 线程安全 | 分布式 Map、Queue、Lock、Semaphore、AtomicLong 等 | 需要分布式锁和分布式数据结构 |
 
-安装客户端后，先确认 Redis 服务已经启动，再使用命令行或图形化客户端连接。建议初学阶段先用命令行完成 `SET`、`GET`、`DEL`、`TTL` 等命令，再用图形化工具观察命令产生的数据。
+- Jedis 和 Lettuce 提供的是 Redis 命令对应的 API，用来操作 Redis 数据；Spring Data Redis 对这两种做了抽象和封装，在 Spring 项目里通常直接使用 Spring Data Redis。
+- Redisson 不只是客户端，它在 Redis 之上实现了分布式、可伸缩的 Java 数据结构，并支持跨进程的同步机制，例如 Lock、Semaphore，适合实现特殊的功能需求。
 
-## 1.5 Redis 与关系型数据库的区别
+## 1.7 Redis 与关系型数据库的区别
 
 | 对比项 | Redis | MySQL 等关系型数据库 |
 | --- | --- | --- |
@@ -126,9 +269,9 @@ redis-cli ping
 | 数据持久性 | 可配置，默认需要关注持久化策略 | 通常默认持久化 |
 | 典型角色 | 缓存、计数、队列 | 核心业务数据 |
 
-两者并不是互相替代的关系。实际项目中常见组合是：MySQL 保存最终数据，Redis 保存热点或临时数据。
+实际项目中常见组合是：MySQL 保存最终数据，Redis 保存热点或临时数据。
 
-## 1.6 第一个 Redis 命令
+## 1.8 第一个 Redis 命令
 
 ```text
 127.0.0.1:6379> SET user:name "小明"
@@ -139,23 +282,47 @@ OK
 
 `SET` 用来保存字符串，`GET` 用来读取字符串。Redis 中每条数据都通过唯一的 key 访问。
 
-## 1.7 Key 的命名规范
+## 1.9 Key 的命名规范
 
-建议使用“业务:对象:属性”的形式命名：
+Redis 的 key 本身是字符串，虽然可以随意命名，但工程上建议遵循下面的约定：
+
+- 遵循基本格式：`[业务名称]:[数据名]:[id]`
+- 长度不超过 44 字节
+- 不包含特殊字符
+
+例如登录业务（login）保存用户信息（user），key 可以设计为 `login:user:10`：
 
 ```text
-user:1001:name
-cart:1001:items
-product:2001:stock
+login:user:10
+cart:item:1001
+product:stock:2001
 ```
 
-这种命名方式可以让 key 的归属和用途一眼可见，避免不同业务之间发生命名冲突。
+这样设计的好处是：可读性强、避免 key 冲突、方便管理、更节省内存。
 
-## 1.8 本篇总结
+为什么建议控制在 44 字节以内？key 会被保存在字典结构中，每个 key 对应字典结构里的一个键值对节点，所以 key 的底层编码包含 int、embstr 和 raw 三种：
 
-1. Redis 是以内存读写为主的高性能键值数据库。
-2. Redis 支持多种数据类型，适合缓存、计数、队列和排行榜等场景。
-3. Redis 与 MySQL 常常配合使用，Redis 负责速度，MySQL 负责核心数据持久化。
-4. `redis-server` 启动服务，`redis-cli` 连接服务。
-5. 命令行客户端适合学习，图形化客户端适合观察和管理。
-6. key 建议采用有层次的冒号命名法。
+| 编码 | 触发条件 | 特点 |
+| --- | --- | --- |
+| int | key 可以当作整数处理时 | 直接按整数保存，占用最小 |
+| embstr | 字符串长度在 44 字节以内 | 使用连续的内存空间，内存占用更小，访问更快 |
+| raw | 字符串长度超过 44 字节 | 内存空间不连续，需要指针再指向另一段保存 SDS 内容的空间，访问性能受影响，还容易产生内存碎片 |
+
+因为编码是自动选择的，把 key 长度控制在 44 字节以内，就能让它一直使用 embstr 这种更省内存的编码。查看 key 的类型和编码方式：
+
+```text
+# 查询指定 key 的数据类型
+TYPE login:user:10
+# 查看指定 key 对应的底层编码方式
+OBJECT ENCODING login:user:10
+```
+
+## 1.10 本篇总结
+
+1. Redis 是以内存读写为主的高性能键值数据库，属于 NoSQL。
+2. NoSQL 与关系型数据库的差异可以从数据结构、数据关联、查询方式、事务特性、存储方式和扩展性六个维度来看，两者各自适合不同的场景。
+3. Redis 的命令执行选择单线程是为了避免上下文切换和锁开销；4.0 用后台线程做异步删除，6.0 用 IO 线程分担命令读取解析与响应写回，命令执行和 IO 多路复用仍在主线程。
+4. Linux 下推荐源码编译安装：先装 gcc 与 tcl，执行 `make` 和 `make install`，可执行文件在 `/usr/local/bin` 下，再用 systemd unit 文件实现开机自启。
+5. `redis.conf` 中重点关注 `bind`、`daemonize`、`requirepass`、`databases`、`maxmemory`、`logfile` 和 `dir`。
+6. key 建议采用 `[业务名称]:[数据名]:[id]` 的分层命名，并控制在 44 字节以内以使用 embstr 编码。
+7. Java 客户端按需选型：Jedis 简单但要配连接池，Lettuce 线程安全且是 Spring Boot 默认，Redisson 提供分布式数据结构与分布式锁。
