@@ -191,7 +191,7 @@ flowchart TD
     A[npm run dev] --> B[Vite 启动开发服务器]
     B --> C[main.js 创建 app]
     C --> D[注册 Router/Element Plus]
-    D --> E[mount 到 #app]
+    D --> E["mount 到 #app"]
     E --> F[匹配当前路由]
     F --> G[组件 setup 执行]
     G --> H[onMounted 加载数据]

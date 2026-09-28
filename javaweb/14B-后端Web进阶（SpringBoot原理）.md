@@ -221,13 +221,13 @@ public class OssProperties {
 
 ```mermaid
 flowchart LR
-    A[@SpringBootApplication] --> B[@EnableAutoConfiguration]
+    A["@SpringBootApplication"] --> B["@EnableAutoConfiguration"]
     B --> C[ImportSelector]
     C --> D[读取 AutoConfiguration.imports]
     D --> E[候选自动配置类]
-    E --> F{@Conditional 条件满足?}
+    E --> F{"@Conditional 条件满足?"}
     F -- 否 --> G[跳过]
-    F -- 是 --> H[执行 @Bean 方法]
+    F -- 是 --> H["执行 @Bean 方法"]
     H --> I[注册到 IOC 容器]
 ```
 
