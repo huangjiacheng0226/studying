@@ -262,7 +262,7 @@ flowchart LR
     C --> D{访问 /dept 并刷新}
     D -- 200 --> E[history 回退正确]
     D -- 404 --> F[补 try_files ... /index.html]
-    C --> G[/api/ 请求]
+    C --> G["/api/ 请求"]
     G --> H[proxy_pass 后端]
     H --> I{浏览器跨域?}
     I -- 是 --> J[统一域名或正确 CORS]

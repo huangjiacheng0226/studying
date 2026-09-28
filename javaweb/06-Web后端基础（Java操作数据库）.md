@@ -662,11 +662,11 @@ mybatis:
 ```mermaid
 flowchart TD
     A[调用 update 方法传入 Emp 对象] --> B{name 是否为 null?}
-    B -- 不是 --> C[拼入 name = #{name}]
+    B -- 不是 --> C["拼入 name = #{name}"]
     B -- 是 --> D[跳过该片段]
     C --> E{deptId 是否为 null?}
     D --> E
-    E -- 不是 --> F[拼入 dept_id = #{deptId}]
+    E -- 不是 --> F["拼入 dept_id = #{deptId}"]
     E -- 是 --> G[跳过该片段]
     F --> H[set 补 SET 并去掉末尾逗号]
     G --> H

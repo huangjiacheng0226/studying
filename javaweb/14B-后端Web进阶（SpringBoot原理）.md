@@ -198,7 +198,7 @@ flowchart TD
     D --> E[读取环境变量/系统属性]
     E --> F[读取命令行参数]
     F --> G[按优先级合并 Environment]
-    G --> H[@Value / @ConfigurationProperties 绑定]
+    G --> H["@Value / @ConfigurationProperties 绑定"]
     H --> I[Bean 使用最终值]
 ```
 
