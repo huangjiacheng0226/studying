@@ -106,7 +106,7 @@ flowchart TD
 
 2. Using index：通过有序索引顺序扫描直接返回有序数据，这种情况即为 using index，不需要额外排序，操作效率高
 
-如果order by字段全部使用升序排序或者降序排序，则都会走索引，但是如果一个字段升序排序，另一个字段降序排序，则不会走索引，explain的extra信息显示的是`Using index, Using filesort`，如果要优化掉Using filesort，则需要另外再创建一个索引，如：`create index idx_user_age_phone_ad on tb_user(age asc, phone desc);`，此时使用`select id, age, phone from tb_user order by age asc, phone desc;`会全部走索引
+这里有几个前提要说清楚：能用索引排序的条件不止"方向一致"，还要排序字段的组合满足最左前缀、并且与索引的列顺序对得上。另外 MySQL 5.7 的索引都是按升序存储的，"全部降序"实际是反向扫描索引，同样能走索引；MySQL 8.0 起才支持建真正的降序索引。所以准确的说法是：排序字段与索引顺序一致、方向统一时通常能走索引；方向混合时，只有建了对应方向的降序索引才能直接用索引排序。比如要优化 `order by age asc, phone desc`，就需要另建一个方向混合的索引，如：`create index idx_user_age_phone_ad on tb_user(age asc, phone desc);`，此时 `select id, age, phone from tb_user order by age asc, phone desc;` 才能全部走索引
 
 对于语句`explain select id,age,phone from tb_user order by phone,age;`Using filesort和Using index都会出现，原因是底层会先排序phone字段，由于缺少age，不满足最左前缀法则，不会使用idx_user_age_phone索引，出现Using filesort，然后排序age字段，满足最左前缀法则，使用索引idx_user_age_phone，出现Using index
 
@@ -133,10 +133,10 @@ flowchart TD
 常见的问题如`limit 2000000, 10`，此时需要 MySQL 排序前2000010条记录，但仅仅返回2000000 - 2000010的记录，其他记录丢弃，查询排序的代价非常大。
 
 > **疑问**：这里明明没有使用order by，为什么要先排序前2000010条记录？
-> 
+>
 > **MySQL并不能保证数据插入顺序和读取顺序一致。**因为必须存在一个聚集索引，所以数据在插入时实际是按照主键顺序插入到B+树（索引底层结构就是一个树）中，所以实际存储是按照主键顺序存储的，但是插入时主键不一定有序，例如插入1、3、5、4、2，但`select * from table`却是1、2、3、4、5，因此`select * from table limit 2000000, 10`本质上是`select * from table order by id limit 2000000, 10`，所以这里需要先排序再返回。
-> 
-> 
+>
+>
 
 优化方案：一般分页查询时，通过创建覆盖索引能够比较好地提高性能，可以通过覆盖索引加子查询形式进行优化
 
@@ -183,7 +183,9 @@ InnoDB 在执行 count(\*) 时，需要把数据一行一行地从引擎里面�
 
 - `count(*)`：InnoDB 引擎并不会把全部字段取出来，而是专门做了优化，不取值，服务层直接按行进行累加
 
-**按效率排序**：`count(字段) < count(主键) < count(1) < count(*)`，所以尽量使用 `count(*)`
+**按效率排序**：`count(字段)` < `count(主键)` ≈ `count(1)` ≈ `count(*)`
+
+只有"字段可为 NULL 的 `count(字段)`"明显更慢，因为它必须把每行的值取出来判断是否为 NULL。在 MySQL 8.0 里，`count(主键)`、`count(1)`、`count(*)` 都被优化成按行累加，实测差距可以忽略。所以结论是优先用 `count(*)`：它语义最清晰，而且被专门优化过；不要为了让语句"更快"把 `count(*)` 改写成 `count(1)`，这个替换的收益可以忽略。
 
 ## 7.update优化（避免锁住过多记录）
 

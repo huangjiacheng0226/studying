@@ -124,17 +124,17 @@ CREATE TABLE 表名(
 
 #### 3.4.2 字符串类型
 
-- **CHAR(N)**：固定长度字符串，最多 255 个字符
+- **CHAR(N)**：固定长度字符串，N 是字符数，最多 255 个字符；不足 N 时用空格补齐，取出时会去掉尾部空格
 
-- **VARCHAR(N)**：可变长度字符串，最多 65,535 个字符
+- **VARCHAR(N)**：可变长度字符串，N 是字符数，但真正受限的是字节：整行所有列加起来不能超过 65,535 字节，所以 VARCHAR 实际能存多少字符取决于字符集（utf8mb4 下一个汉字最多占 4 字节）
 
-- **TINYBLOB**：不超过 255 个字符的二进制数据
+- **TINYBLOB**：不超过 255 字节的二进制数据
 
-- **TINYTEXT**：短文本字符串，最多 255 个字符
+- **TINYTEXT**：短文本字符串，最多 255 字节
 
-- **BLOB**：二进制形式的长文本数据，最多 65,535 个字符
+- **BLOB**：二进制形式的长文本数据，最多 65,535 字节
 
-- **TEXT**：长文本数据，最多65,535个字符
+- **TEXT**：长文本数据，最多 65,535 字节
 
 - **MEDIUMBLOB**：二进制形式的中等长度文本数据，最多 16,777,215 个字符
 
@@ -293,7 +293,7 @@ SELECT
         字段列表
 FROM
         表名列表
-WHERE 
+WHERE
         条件列表
 GROUP BY
         分组字段列表
@@ -372,7 +372,9 @@ SELECT 聚合函数(字段列表) FROM 表名;
 |AVG|平均值|
 |SUM|求和|
 
-NULL值不参与聚合函数的运算
+NULL 值不参与聚合函数的运算：`AVG`、`SUM`、`MAX`、`MIN` 会直接跳过 NULL 的行，`COUNT(字段)` 也只统计该字段非 NULL 的行数。
+
+但 `COUNT(*)` 是例外，它统计的是行数，含 NULL 的行照样计入。所以 `COUNT(*)` 和 `COUNT(字段)` 的结果可能不一样，选哪个要看业务语义是"有多少行"还是"有多少行填了这个字段"。
 
 ### 5.5 DQL-分组查询
 
@@ -382,7 +384,7 @@ SELECT 字段列表 FROM 表名 [WHERE 条件] GROUP BY 分组字段名 [HAVING 
 
 #### WHERE和HAVING的区别
 
-1. 执行时机不同：执行时机不同：WHERE是分组之前进行过滤，不满足WHERE条件，不参与分组；而HAVING是分组之后对结果进行过滤
+1. 执行时机不同：WHERE 是分组之前进行过滤，不满足 WHERE 条件的行不参与分组；而 HAVING 是分组之后对结果进行过滤
 
 2. 判断条件不同：WHERE不能对聚合函数进行判断，而HAVING可以
 
@@ -447,8 +449,13 @@ CREATE USER '用户名'@'主机名' IDENTIFIED BY '密码';
 修改用户密码
 
 ```SQL
--- MySQL 5.7.6 及以上版本使用
-ALTER USER '用户名'@'主机名' IDENTIFIED [WITH mysql_native_password] BY '新密码';
+-- MySQL 5.7.6 及以上版本使用，默认按服务器当前的认证插件处理密码
+ALTER USER '用户名'@'主机名' IDENTIFIED BY '新密码';
+
+-- 只有需要指定认证插件时才加 WITH 子句
+-- MySQL 8.0 的默认插件是 caching_sha2_password；
+-- mysql_native_password 自 8.0.34 起已被标记弃用，仅在兼容旧客户端时才显式指定
+ALTER USER '用户名'@'主机名' IDENTIFIED WITH caching_sha2_password BY '新密码';
 
 -- MySQL 5.7.6 以下版本使用
 SET PASSWORD FOR '用户名'@'主机名' = PASSWORD('new_password');
@@ -808,6 +815,173 @@ select * from employee where (job, salary) in (select job, salary from employee 
 -- 查询入职日期是2006-01-01之后的员工，及其部门信息
 select e.*, d.* from (select * from employee where entrydate > '2006-01-01') as e left join dept as d on e.dept = d.id;
 ```
+## 9.窗口函数
+
+窗口函数对一组与当前行相关的行做计算，并把计算结果作为新列附加到当前行上。它与 `GROUP BY` 的区别在于：`GROUP BY` 把多行合并成一行，窗口函数不合并行，明细行全部保留，所以同一条语句里既能看明细又能看聚合结果。
+
+窗口函数是 MySQL 8.0 起才支持的语法，5.7 及更早版本需要用自连接或用户变量模拟。
+
+### 9.1 OVER() 基本语法
+
+```SQL
+函数名([参数]) OVER (
+    [PARTITION BY 分区字段列表]
+    [ORDER BY 排序字段列表 [ASC|DESC]]
+    [ROWS BETWEEN 帧起点 AND 帧终点]
+)
+```
+
+`OVER()` 是窗口函数的标志，括号内定义窗口范围；括号里什么都不写时，整个结果集就是一个窗口。
+
+|窗口子句|作用|省略时的默认行为|
+|---|---|---|
+|`PARTITION BY`|按字段把结果集划分成若干分区，函数在每个分区内独立计算|整个结果集作为一个分区|
+|`ORDER BY`（窗口内）|决定分区内行的顺序：排名函数据此定名次，聚合函数据此定累计范围|分区内不排序，聚合针对整个分区|
+|`ROWS BETWEEN ... AND ...`|精确指定参与计算的行范围，例如 `ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING` 表示当前行及前后各一行|有 `ORDER BY` 时默认取分区第一行到当前行，没有 `ORDER BY` 时默认取整个分区|
+
+两个要点：
+
+- `OVER` 里的 `ORDER BY` 只管窗口内的计算，不改变最终输出顺序；要改变输出顺序仍需在语句末尾写普通的 `ORDER BY`
+
+- `PARTITION BY` 的分组逻辑与 `GROUP BY` 相同，区别是分区后行不会被打包成一行
+
+### 9.2 ROW_NUMBER()、RANK() 与 DENSE_RANK() 对比
+
+三个排名函数都按窗口内 `ORDER BY` 的顺序给每行一个名次，差别在遇到相同排序值（并列）时的行为。以分数 90、90、80 三行降序排名为例：
+
+|函数|并列时的行为|是否跳号|三行得到的名次|
+|---|---|---|---|
+|`ROW_NUMBER()`|不认为存在并列，同值也按出现顺序依次编号|不涉及|1、2、3|
+|`RANK()`|同值的行名次相同，下一个不同的值跳过被占用的名次|跳号|1、1、3|
+|`DENSE_RANK()`|同值的行名次相同，下一个不同的值紧接其后|不跳号|1、1、2|
+
+```SQL
+SELECT id, name, salary,
+       ROW_NUMBER() OVER (ORDER BY salary DESC) AS row_no,
+       RANK()       OVER (ORDER BY salary DESC) AS rank_no,
+       DENSE_RANK() OVER (ORDER BY salary DESC) AS dense_rank_no
+FROM employee;
+```
+
+选择依据：需要每行一个唯一序号、结果行数固定时用 `ROW_NUMBER()`；需要并列名次且名次之间留空（例如竞赛排名）时用 `RANK()`；需要并列名次且名次连续时用 `DENSE_RANK()`。
+
+### 9.3 聚合窗口函数
+
+普通聚合函数加上 `OVER()` 就变成聚合窗口函数。不写窗口内 `ORDER BY` 时按整个分区聚合，每行都会带上所在分区的聚合值。
+
+```SQL
+-- 每个员工的信息，加上其所在部门的工资总和与平均工资
+SELECT id, name, dept_id, salary,
+       SUM(salary) OVER (PARTITION BY dept_id) AS dept_total,
+       AVG(salary) OVER (PARTITION BY dept_id) AS dept_avg
+FROM employee;
+```
+
+窗口内加上 `ORDER BY` 后，默认窗口帧变成分区第一行到当前行，聚合结果也就成了累计值。
+
+```SQL
+-- 按入职时间累计的工资总额
+SELECT id, name, hire_date, salary,
+       SUM(salary) OVER (PARTITION BY dept_id ORDER BY hire_date) AS running_total
+FROM employee;
+```
+
+需要滑动窗口时显式写出窗口帧，例如 `AVG(salary) OVER (PARTITION BY dept_id ORDER BY hire_date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` 表示当前行及其前两行的平均工资。
+
+### 9.4 示例：每个部门取工资前三名
+
+窗口函数不能直接写在 `WHERE` 里，因为 `WHERE` 的执行时机在窗口函数之前。做法是先在子查询或 CTE 中算出名次，外层再按名次筛选。
+
+```SQL
+WITH ranked AS (
+    SELECT id, name, dept_id, salary,
+           ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC) AS rn
+    FROM employee
+)
+SELECT dept_id, id, name, salary
+FROM ranked
+WHERE rn <= 3
+ORDER BY dept_id, rn;
+```
+
+等价的子查询写法：
+
+```SQL
+SELECT dept_id, id, name, salary
+FROM (
+    SELECT id, name, dept_id, salary,
+           ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC) AS rn
+    FROM employee
+) AS t
+WHERE t.rn <= 3
+ORDER BY dept_id, rn;
+```
+
+用 `ROW_NUMBER()` 时每个部门严格返回 3 行；如果希望并列的人一起入选，把 `ROW_NUMBER()` 换成 `RANK()` 或 `DENSE_RANK()`，此时一个部门返回的行数可能多于 3 行。
+
+## 10.插入数据的三种写法
+
+除了 `4.1` 里的 `INSERT ... VALUES`，实际工作中还会用到三种批量或带冲突处理的插入写法。它们的差别集中在“什么时候真的插入”“冲突时怎么办”以及“对自增主键和触发器的影响”上。
+
+|写法|触发条件|自增主键行为|触发器行为|适用场景|
+|---|---|---|---|---|
+|`INSERT INTO ... SELECT ...`|查询结果满足目标表约束（主键唯一、非空、外键等）就会插入，本身没有冲突处理|每成功插入一行分配一个新的自增值|对插入的每一行触发行级 INSERT 触发器|把另一张表或同一张表的数据批量导入，例如备份表、临时表、归档表|
+|`INSERT ... ON DUPLICATE KEY UPDATE`|插入的值与主键或唯一索引冲突时才改为执行 UPDATE；不冲突时正常插入；表上没有主键和唯一索引时永远不会触发更新|冲突行走 UPDATE 分支，主键值不变；但自增值可能已被分配，MySQL 8.0 默认 `innodb_autoinc_lock_mode=2` 时批量语句会出现自增空洞，不要依赖自增号连续|插入的行触发 INSERT 触发器，发生冲突改为更新的行触发 UPDATE 触发器|存在则更新、不存在则插入的 upsert 场景，例如同步外部数据、累加统计计数|
+|`REPLACE INTO`|本质是先删除冲突行再插入新行；表上没有主键或唯一索引时退化为普通 INSERT|一定为新插入的行分配自增值，主键值会变（除非显式指定主键）|先触发 DELETE 触发器，再触发 INSERT 触发器|只需要保留最新一份数据、且不关心主键变化和删除触发器的场景|
+
+### 10.1 INSERT INTO ... SELECT ...
+
+从另一张表批量导入，目标表列与查询列按位置一一对应，建议显式写出列名。
+
+```SQL
+-- 把 2018 年之前入职的员工批量复制到备份表
+INSERT INTO employee_backup (id, name, dept_id, salary)
+SELECT id, name, dept_id, salary
+FROM employee
+WHERE hire_date < '2018-01-01';
+```
+
+- 数据源可以是同一张表，MySQL 会先把查询结果取出再插入，因此 `INSERT INTO t SELECT ... FROM t` 这类自复制不会无限循环
+
+- 查询结果中的行若违反目标表约束（主键重复、非空等），整条语句会按当前事务和 `sql_mode` 的规则失败或报错，批量导入前最好先在测试表上验证
+
+### 10.2 INSERT ... ON DUPLICATE KEY UPDATE
+
+只有插入的值与主键或唯一索引冲突时才会转向更新分支。
+
+```SQL
+-- 旧写法：用 VALUES() 引用本次待插入的值，MySQL 8.0.20 起标记为弃用
+INSERT INTO user_stats (user_id, login_count)
+VALUES (1001, 1)
+ON DUPLICATE KEY UPDATE login_count = login_count + VALUES(login_count);
+
+-- MySQL 8.0.20 起推荐的行别名写法：AS new 之后用 new.列名 引用待插入的值
+INSERT INTO user_stats (user_id, login_count)
+VALUES (1001, 1) AS new
+ON DUPLICATE KEY UPDATE login_count = login_count + new.login_count;
+```
+
+- 触发更新的前提是插入的值命中了主键或唯一索引；表上没有任何唯一约束时这条语句永远走插入分支，达不到更新已有行的效果
+
+- 行别名不能与表名重名，别名只在同一条语句的 `ON DUPLICATE KEY UPDATE` 子句中可用；`VALUES()` 函数从 MySQL 8.0.20 起被标记为弃用，新代码应使用行别名
+
+- 影响行数可以判断走了哪个分支：1 表示插入，2 表示更新，0 表示更新前后取值相同（没有实际变化）
+
+### 10.3 REPLACE INTO
+
+命中主键或唯一索引时先删除旧行，再插入新行。
+
+```SQL
+REPLACE INTO user_stats (user_id, login_count)
+VALUES (1001, 1);
+```
+
+- 与 `ON DUPLICATE KEY UPDATE` 相比代价更大：旧行被整行删除，自增主键变成新值，依赖原主键的外部引用会失效
+
+- 删除动作会触发 DELETE 触发器；如果子表外键声明了 `ON DELETE CASCADE`，子表数据会被连带删除
+
+- 表上既没有主键也没有唯一索引时，`REPLACE INTO` 与 `INSERT INTO` 没有区别，只会不断产生重复数据
+
 ### SQL 分类与查询执行顺序
 
 ```mermaid
